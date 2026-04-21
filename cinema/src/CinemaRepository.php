@@ -648,7 +648,7 @@ final class CinemaRepository
         if ($columnLower === 'trailer_url') {
             return (string) ($base['trailer_url'] ?? '');
         }
-        if (str_contains($typeLower, 'bool')) {
+        if (str_contains($typeLower, 'bool') || str_starts_with($columnLower, 'is_') || str_starts_with($columnLower, 'has_')) {
             return $this->driver() === 'pgsql' ? false : 0;
         }
         if (str_contains($typeLower, 'date') && !str_contains($typeLower, 'time')) {
@@ -682,7 +682,7 @@ final class CinemaRepository
         if ($columnLower === 'start_time') {
             return (string) ($base['start_time'] ?? date('Y-m-d H:i:s'));
         }
-        if (str_contains($typeLower, 'bool')) {
+        if (str_contains($typeLower, 'bool') || str_starts_with($columnLower, 'is_') || str_starts_with($columnLower, 'has_')) {
             return $this->driver() === 'pgsql' ? false : 0;
         }
         if (str_contains($typeLower, 'date') && !str_contains($typeLower, 'time')) {
@@ -736,7 +736,7 @@ final class CinemaRepository
             $stmt->execute(['table' => $table]);
         } else {
             $stmt = $this->db->prepare(
-                'SELECT column_name, is_nullable, column_default, data_type
+                'SELECT column_name, is_nullable, column_default, data_type, udt_name
                  FROM information_schema.columns
                  WHERE table_schema = current_schema() AND table_name = :table'
             );
@@ -749,10 +749,15 @@ final class CinemaRepository
             if ($name === '') {
                 continue;
             }
+            $type = strtolower((string) ($row['data_type'] ?? ''));
+            $udtName = strtolower((string) ($row['udt_name'] ?? ''));
+            if ($type === 'user-defined' && $udtName !== '') {
+                $type = $udtName;
+            }
             $meta[$name] = [
                 'nullable' => strtoupper((string) ($row['is_nullable'] ?? 'YES')) === 'YES',
                 'default' => $row['column_default'] ?? null,
-                'type' => strtolower((string) ($row['data_type'] ?? '')),
+                'type' => $type,
             ];
         }
 
