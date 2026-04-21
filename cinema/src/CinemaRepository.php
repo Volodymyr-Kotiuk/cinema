@@ -596,7 +596,7 @@ final class CinemaRepository
             $insert[$column] = $this->fallbackValueForRequiredColumn($column, $spec['type'], $base);
         }
 
-        return $insert;
+        return $this->normalizeInsertDataTypes($insert, $meta);
     }
 
     /**
@@ -621,7 +621,7 @@ final class CinemaRepository
             $insert[$column] = $this->fallbackValueForRequiredShowtimeColumn($column, $spec['type'], $base);
         }
 
-        return $insert;
+        return $this->normalizeInsertDataTypes($insert, $meta);
     }
 
     /** @param array<string, mixed> $base */
@@ -696,6 +696,65 @@ final class CinemaRepository
         }
 
         return '';
+    }
+
+    /**
+     * @param array<string, mixed> $insert
+     * @param array<string, array{nullable: bool, default: mixed, type: string}> $meta
+     * @return array<string, mixed>
+     */
+    private function normalizeInsertDataTypes(array $insert, array $meta): array
+    {
+        foreach ($insert as $column => $value) {
+            $spec = $meta[$column] ?? null;
+            if ($spec === null) {
+                continue;
+            }
+
+            if ($this->isBooleanColumnSpec($column, $spec['type'], $spec['default'])) {
+                if ($value === '' || $value === null) {
+                    $insert[$column] = $this->driver() === 'pgsql' ? false : 0;
+                    continue;
+                }
+
+                if (is_string($value)) {
+                    $v = strtolower(trim($value));
+                    if (in_array($v, ['1', 'true', 't', 'yes', 'on'], true)) {
+                        $insert[$column] = $this->driver() === 'pgsql' ? true : 1;
+                        continue;
+                    }
+                    if (in_array($v, ['0', 'false', 'f', 'no', 'off', ''], true)) {
+                        $insert[$column] = $this->driver() === 'pgsql' ? false : 0;
+                        continue;
+                    }
+                }
+            }
+        }
+
+        return $insert;
+    }
+
+    private function isBooleanColumnSpec(string $column, string $type, mixed $default): bool
+    {
+        $columnLower = strtolower($column);
+        $typeLower = strtolower($type);
+        $defaultStr = strtolower((string) ($default ?? ''));
+
+        if (str_contains($typeLower, 'bool') || str_contains($typeLower, 'bit')) {
+            return true;
+        }
+
+        if (
+            str_starts_with($columnLower, 'is_')
+            || str_starts_with($columnLower, 'has_')
+            || str_starts_with($columnLower, 'can_')
+            || str_starts_with($columnLower, 'allow_')
+            || str_ends_with($columnLower, '_enabled')
+        ) {
+            return true;
+        }
+
+        return str_contains($defaultStr, 'true') || str_contains($defaultStr, 'false');
     }
 
     /**
