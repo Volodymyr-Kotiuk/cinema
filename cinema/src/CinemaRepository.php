@@ -28,8 +28,9 @@ final class CinemaRepository
     /** @return array<int, array<string, mixed>> */
     private function moviesNowShowing(string $today, int $limit): array
     {
+        $genreAgg = $this->genreAggregateSql();
         $stmt = $this->db->prepare(
-            "SELECT m.*, MIN(date(s.start_time)) AS first_show_date, GROUP_CONCAT(g.name, ', ') AS genres
+            "SELECT m.*, MIN(date(s.start_time)) AS first_show_date, {$genreAgg} AS genres
              FROM movies m
              JOIN showtimes s ON s.movie_id = m.id AND s.status = 'active'
              LEFT JOIN movie_genres mg ON mg.movie_id = m.id
@@ -49,8 +50,9 @@ final class CinemaRepository
     /** @return array<int, array<string, mixed>> */
     private function moviesComingSoon(string $today, int $limit): array
     {
+        $genreAgg = $this->genreAggregateSql();
         $stmt = $this->db->prepare(
-            "SELECT m.*, MIN(date(s.start_time)) AS first_show_date, GROUP_CONCAT(g.name, ', ') AS genres
+            "SELECT m.*, MIN(date(s.start_time)) AS first_show_date, {$genreAgg} AS genres
              FROM movies m
              JOIN showtimes s ON s.movie_id = m.id AND s.status = 'active'
              LEFT JOIN movie_genres mg ON mg.movie_id = m.id
@@ -71,8 +73,9 @@ final class CinemaRepository
     /** @return array<string, mixed>|null */
     public function movieBySlug(string $slug): ?array
     {
+        $genreAgg = $this->genreAggregateSql();
         $stmt = $this->db->prepare(
-            "SELECT m.*, GROUP_CONCAT(g.name, ', ') AS genres
+            "SELECT m.*, {$genreAgg} AS genres
              FROM movies m
              LEFT JOIN movie_genres mg ON mg.movie_id = m.id
              LEFT JOIN genres g ON g.id = mg.genre_id
@@ -513,4 +516,15 @@ final class CinemaRepository
         $this->db->prepare('DELETE FROM movies WHERE id = ?')->execute([$id]);
     }
 
+    private function genreAggregateSql(): string
+    {
+        return $this->driver() === 'pgsql'
+            ? "STRING_AGG(g.name, ', ')"
+            : "GROUP_CONCAT(g.name, ', ')";
+    }
+
+    private function driver(): string
+    {
+        return (string) $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    }
 }

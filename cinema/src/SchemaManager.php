@@ -145,6 +145,24 @@ final class SchemaManager
         );
 
         $this->addColumnIfMissing('users', 'login', "VARCHAR(191) NOT NULL DEFAULT ''");
+        $this->addColumnIfMissing('movies', 'slug', "VARCHAR(255) NOT NULL DEFAULT ''");
+        $this->addColumnIfMissing('movies', 'description', "TEXT NOT NULL DEFAULT ''");
+        $this->addColumnIfMissing('movies', 'poster_url', "VARCHAR(1000) NOT NULL DEFAULT ''");
+        $this->addColumnIfMissing('movies', 'banner_url', "VARCHAR(1000) NOT NULL DEFAULT ''");
+        $this->addColumnIfMissing('movies', 'trailer_url', "VARCHAR(1000) NOT NULL DEFAULT ''");
+        $this->addColumnIfMissing('movies', 'duration_minutes', "INTEGER NOT NULL DEFAULT 120");
+        $this->addColumnIfMissing('movies', 'release_date', "DATE NOT NULL DEFAULT CURRENT_DATE");
+        $this->addColumnIfMissing('movies', 'age_rating', "VARCHAR(32) NOT NULL DEFAULT '12+'");
+        $this->addColumnIfMissing('movies', 'language', "VARCHAR(64) NOT NULL DEFAULT 'UA дубляж'");
+        $this->addColumnIfMissing('movies', 'format', "VARCHAR(32) NOT NULL DEFAULT '2D'");
+        $this->addColumnIfMissing('movies', 'is_now_showing', "{$boolType} NOT NULL DEFAULT {$falseValue}");
+        $this->addColumnIfMissing('movies', 'is_coming_soon', "{$boolType} NOT NULL DEFAULT {$falseValue}");
+        $this->addColumnIfMissing('movies', 'is_popular', "{$boolType} NOT NULL DEFAULT {$falseValue}");
+        $this->addColumnIfMissing('movies', 'popularity_score', "INTEGER NOT NULL DEFAULT 0");
+        $this->addColumnIfMissing('movies', 'created_at', $timestampType);
+        $this->addColumnIfMissing('showtimes', 'start_time', "{$dateTimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP");
+        $this->addColumnIfMissing('showtimes', 'base_price', "DECIMAL(10,2) NOT NULL DEFAULT 170.00");
+        $this->addColumnIfMissing('showtimes', 'status', "VARCHAR(32) NOT NULL DEFAULT 'active'");
         $this->addColumnIfMissing('bookings', 'customer_name', "VARCHAR(255) NOT NULL DEFAULT ''");
         $this->addColumnIfMissing('bookings', 'customer_email', "VARCHAR(255) NOT NULL DEFAULT ''");
         $this->normalizeMissingLogins();
