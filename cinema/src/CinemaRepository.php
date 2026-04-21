@@ -10,6 +10,8 @@ use Throwable;
 final class CinemaRepository
 {
     private const SUPER_LUX_PRICE = 280.0;
+    /** @var array<string, array<string, array{nullable: bool, default: mixed, type: string}>> */
+    private array $tableMetaCache = [];
     public function __construct(private readonly PDO $db)
     {
     }
@@ -452,6 +454,9 @@ final class CinemaRepository
             throw new \RuntimeException('Час уже зайнятий у цьому залі: ' . implode(', ', $samples));
         }
 
+        $boolFalse = $this->driver() === 'pgsql' ? false : 0;
+        $boolTrue = $this->driver() === 'pgsql' ? true : 1;
+
         $base = [
             'title' => (string) $payload['title'],
             'slug' => (string) $payload['slug'],
@@ -464,47 +469,63 @@ final class CinemaRepository
             'age_rating' => (string) ($payload['age_rating'] ?? '12+'),
             'language' => (string) ($payload['language'] ?? 'UA дубляж'),
             'format' => (string) ($payload['format'] ?? '2D'),
-            'is_now_showing' => 0,
-            'is_coming_soon' => 0,
-            'is_popular' => 0,
+            'is_now_showing' => $boolFalse,
+            'is_coming_soon' => $boolFalse,
+            'is_popular' => $boolFalse,
             'popularity_score' => (int) ($payload['popularity_score'] ?? 0),
         ];
 
         $today = date('Y-m-d');
         if ($showStartDate > $today) {
-            $base['is_coming_soon'] = 1;
+            $base['is_coming_soon'] = $boolTrue;
         } elseif ($showEndDate >= $today) {
-            $base['is_now_showing'] = 1;
+            $base['is_now_showing'] = $boolTrue;
         }
 
+        $movieMeta = $this->tableColumnMetadata('movies');
         if ($id > 0) {
-            $sql =
-                'UPDATE movies SET
-                    title=:title, slug=:slug, description=:description, poster_url=:poster_url, banner_url=:banner_url,
-                    trailer_url=:trailer_url, duration_minutes=:duration_minutes, release_date=:release_date,
-                    age_rating=:age_rating, language=:language, format=:format,
-                    is_now_showing=:is_now_showing, is_coming_soon=:is_coming_soon, is_popular=:is_popular,
-                    popularity_score=:popularity_score
-                 WHERE id=:id';
-            $base['id'] = $id;
-            $this->db->prepare($sql)->execute($base);
+            $updateData = $this->filterDataByExistingColumns($base, $movieMeta);
+            if ($updateData === []) {
+                throw new \RuntimeException('Некоректна структура таблиці movies: немає полів для оновлення');
+            }
+
+            $setParts = [];
+            foreach (array_keys($updateData) as $column) {
+                $setParts[] = $column . '=:' . $column;
+            }
+            $sql = 'UPDATE movies SET ' . implode(', ', $setParts) . ' WHERE id=:id';
+            $updateData['id'] = $id;
+            $this->db->prepare($sql)->execute($updateData);
         } else {
-            $sql =
-                'INSERT INTO movies
-                    (title, slug, description, poster_url, banner_url, trailer_url, duration_minutes, release_date, age_rating, language, format, is_now_showing, is_coming_soon, is_popular, popularity_score)
-                 VALUES
-                    (:title, :slug, :description, :poster_url, :banner_url, :trailer_url, :duration_minutes, :release_date, :age_rating, :language, :format, :is_now_showing, :is_coming_soon, :is_popular, :popularity_score)';
-            $this->db->prepare($sql)->execute($base);
+            $insertData = $this->buildMovieInsertData($base, $movieMeta);
+            if ($insertData === []) {
+                throw new \RuntimeException('Некоректна структура таблиці movies: немає полів для вставки');
+            }
+
+            $columns = array_keys($insertData);
+            $placeholders = array_map(static fn (string $column): string => ':' . $column, $columns);
+            $sql = 'INSERT INTO movies (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
+            $this->db->prepare($sql)->execute($insertData);
             $id = (int) $this->db->lastInsertId();
         }
 
         $this->db->prepare('DELETE FROM showtimes WHERE movie_id = ?')->execute([$id]);
 
-        $insertShowtime = $this->db->prepare(
-            "INSERT INTO showtimes (movie_id, hall_id, start_time, format, base_price, status) VALUES (?, ?, ?, ?, ?, 'active')"
-        );
+        $showtimeMeta = $this->tableColumnMetadata('showtimes');
         foreach ($requestedStartTimes as $startTime) {
-            $insertShowtime->execute([$id, $hallId, $startTime, $base['format'], 170.0]);
+            $showtimeBase = [
+                'movie_id' => $id,
+                'hall_id' => $hallId,
+                'start_time' => $startTime,
+                'format' => $base['format'],
+                'base_price' => 170.0,
+                'status' => 'active',
+            ];
+            $showtimeInsertData = $this->buildShowtimeInsertData($showtimeBase, $showtimeMeta);
+            $columns = array_keys($showtimeInsertData);
+            $placeholders = array_map(static fn (string $column): string => ':' . $column, $columns);
+            $sql = 'INSERT INTO showtimes (' . implode(', ', $columns) . ') VALUES (' . implode(', ', $placeholders) . ')';
+            $this->db->prepare($sql)->execute($showtimeInsertData);
         }
     }
 
@@ -534,5 +555,207 @@ final class CinemaRepository
     private function activeSeatCondition(string $column = 'is_active'): string
     {
         return $column . ' = ' . ($this->driver() === 'pgsql' ? 'TRUE' : '1');
+    }
+
+    /**
+     * @param array<string, mixed> $data
+     * @param array<string, array{nullable: bool, default: mixed, type: string}> $meta
+     * @return array<string, mixed>
+     */
+    private function filterDataByExistingColumns(array $data, array $meta): array
+    {
+        $filtered = [];
+        foreach ($data as $column => $value) {
+            if (isset($meta[$column])) {
+                $filtered[$column] = $value;
+            }
+        }
+
+        return $filtered;
+    }
+
+    /**
+     * @param array<string, mixed> $base
+     * @param array<string, array{nullable: bool, default: mixed, type: string}> $meta
+     * @return array<string, mixed>
+     */
+    private function buildMovieInsertData(array $base, array $meta): array
+    {
+        $insert = $this->filterDataByExistingColumns($base, $meta);
+
+        foreach ($meta as $column => $spec) {
+            if (array_key_exists($column, $insert) || $column === 'id') {
+                continue;
+            }
+
+            $default = $spec['default'];
+            if ($spec['nullable'] || $default !== null) {
+                continue;
+            }
+
+            $insert[$column] = $this->fallbackValueForRequiredColumn($column, $spec['type'], $base);
+        }
+
+        return $insert;
+    }
+
+    /**
+     * @param array<string, mixed> $base
+     * @param array<string, array{nullable: bool, default: mixed, type: string}> $meta
+     * @return array<string, mixed>
+     */
+    private function buildShowtimeInsertData(array $base, array $meta): array
+    {
+        $insert = $this->filterDataByExistingColumns($base, $meta);
+
+        foreach ($meta as $column => $spec) {
+            if (array_key_exists($column, $insert) || $column === 'id') {
+                continue;
+            }
+
+            $default = $spec['default'];
+            if ($spec['nullable'] || $default !== null) {
+                continue;
+            }
+
+            $insert[$column] = $this->fallbackValueForRequiredShowtimeColumn($column, $spec['type'], $base);
+        }
+
+        return $insert;
+    }
+
+    /** @param array<string, mixed> $base */
+    private function fallbackValueForRequiredColumn(string $column, string $type, array $base): mixed
+    {
+        $columnLower = strtolower($column);
+        $typeLower = strtolower($type);
+
+        if ($columnLower === 'price') {
+            return 170.0;
+        }
+        if ($columnLower === 'slug') {
+            return (string) ($base['slug'] ?? ('movie-' . time()));
+        }
+        if ($columnLower === 'title') {
+            return (string) ($base['title'] ?? 'Без назви');
+        }
+        if ($columnLower === 'poster_url') {
+            return (string) ($base['poster_url'] ?? '');
+        }
+        if ($columnLower === 'banner_url') {
+            return (string) ($base['banner_url'] ?? ($base['poster_url'] ?? ''));
+        }
+        if ($columnLower === 'trailer_url') {
+            return (string) ($base['trailer_url'] ?? '');
+        }
+        if (str_contains($typeLower, 'bool')) {
+            return $this->driver() === 'pgsql' ? false : 0;
+        }
+        if (str_contains($typeLower, 'date') && !str_contains($typeLower, 'time')) {
+            return (string) ($base['release_date'] ?? date('Y-m-d'));
+        }
+        if (str_contains($typeLower, 'time')) {
+            return date('Y-m-d H:i:s');
+        }
+        if (preg_match('/int|numeric|decimal|real|double|float/', $typeLower) === 1) {
+            return 0;
+        }
+
+        return '';
+    }
+
+    /** @param array<string, mixed> $base */
+    private function fallbackValueForRequiredShowtimeColumn(string $column, string $type, array $base): mixed
+    {
+        $columnLower = strtolower($column);
+        $typeLower = strtolower($type);
+
+        if ($columnLower === 'status') {
+            return 'active';
+        }
+        if ($columnLower === 'format') {
+            return (string) ($base['format'] ?? '2D');
+        }
+        if ($columnLower === 'base_price' || $columnLower === 'price') {
+            return (float) ($base['base_price'] ?? 170.0);
+        }
+        if ($columnLower === 'start_time') {
+            return (string) ($base['start_time'] ?? date('Y-m-d H:i:s'));
+        }
+        if (str_contains($typeLower, 'bool')) {
+            return $this->driver() === 'pgsql' ? false : 0;
+        }
+        if (str_contains($typeLower, 'date') && !str_contains($typeLower, 'time')) {
+            return date('Y-m-d');
+        }
+        if (str_contains($typeLower, 'time')) {
+            return date('Y-m-d H:i:s');
+        }
+        if (preg_match('/int|numeric|decimal|real|double|float/', $typeLower) === 1) {
+            return 0;
+        }
+
+        return '';
+    }
+
+    /**
+     * @return array<string, array{nullable: bool, default: mixed, type: string}>
+     */
+    private function tableColumnMetadata(string $table): array
+    {
+        if (isset($this->tableMetaCache[$table])) {
+            return $this->tableMetaCache[$table];
+        }
+
+        $driver = $this->driver();
+        $meta = [];
+
+        if ($driver === 'sqlite') {
+            $rows = $this->db->query('PRAGMA table_info(' . $table . ')')->fetchAll(PDO::FETCH_ASSOC) ?: [];
+            foreach ($rows as $row) {
+                $name = (string) ($row['name'] ?? '');
+                if ($name === '') {
+                    continue;
+                }
+                $meta[$name] = [
+                    'nullable' => (int) ($row['notnull'] ?? 0) === 0,
+                    'default' => $row['dflt_value'] ?? null,
+                    'type' => strtolower((string) ($row['type'] ?? '')),
+                ];
+            }
+
+            return $this->tableMetaCache[$table] = $meta;
+        }
+
+        if ($driver === 'mysql') {
+            $stmt = $this->db->prepare(
+                'SELECT column_name, is_nullable, column_default, data_type
+                 FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = :table'
+            );
+            $stmt->execute(['table' => $table]);
+        } else {
+            $stmt = $this->db->prepare(
+                'SELECT column_name, is_nullable, column_default, data_type
+                 FROM information_schema.columns
+                 WHERE table_schema = current_schema() AND table_name = :table'
+            );
+            $stmt->execute(['table' => $table]);
+        }
+
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC) ?: [];
+        foreach ($rows as $row) {
+            $name = (string) ($row['column_name'] ?? '');
+            if ($name === '') {
+                continue;
+            }
+            $meta[$name] = [
+                'nullable' => strtoupper((string) ($row['is_nullable'] ?? 'YES')) === 'YES',
+                'default' => $row['column_default'] ?? null,
+                'type' => strtolower((string) ($row['data_type'] ?? '')),
+            ];
+        }
+
+        return $this->tableMetaCache[$table] = $meta;
     }
 }
