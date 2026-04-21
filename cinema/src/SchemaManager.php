@@ -416,7 +416,16 @@ final class SchemaManager
 
     private function dateTimeType(): string
     {
-        return $this->driver() === 'sqlite' ? 'TEXT' : 'DATETIME';
+        $driver = $this->driver();
+        if ($driver === 'sqlite') {
+            return 'TEXT';
+        }
+
+        if ($driver === 'pgsql') {
+            return 'TIMESTAMP';
+        }
+
+        return 'DATETIME';
     }
 
     private function timestampType(): string
