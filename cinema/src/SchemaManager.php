@@ -265,8 +265,9 @@ final class SchemaManager
 
     private function seedHallSeats(int $hallId, int $rows, int $cols): void
     {
+        $activeValue = $this->trueValue();
         $stmt = $this->db->prepare(
-            'INSERT INTO hall_seats (hall_id, row_label, seat_number, seat_label, is_active) VALUES (?, ?, ?, ?, 1)'
+            'INSERT INTO hall_seats (hall_id, row_label, seat_number, seat_label, is_active) VALUES (?, ?, ?, ?, ' . $activeValue . ')'
         );
 
         for ($r = 0; $r < $rows; $r++) {

@@ -127,6 +127,7 @@ final class CinemaRepository
     /** @return array<string, mixed>|null */
     public function showtimeDetails(int $showtimeId): ?array
     {
+        $activeSeatCondition = $this->activeSeatCondition('hs.is_active');
         $stmt = $this->db->prepare(
             "SELECT s.*, m.title AS movie_title, m.slug AS movie_slug, m.poster_url, m.age_rating, m.duration_minutes, h.name AS hall_name, h.id AS hall_id
              FROM showtimes s
@@ -140,10 +141,11 @@ final class CinemaRepository
             return null;
         }
 
+        $activeSeatCondition = $this->activeSeatCondition('hs.is_active');
         $seatStmt = $this->db->prepare(
             'SELECT hs.*
              FROM hall_seats hs
-             WHERE hs.hall_id = :hall_id AND hs.is_active = 1
+             WHERE hs.hall_id = :hall_id AND ' . $activeSeatCondition . '
              ORDER BY hs.row_label, hs.seat_number'
         );
         $seatStmt->execute(['hall_id' => (int) $showtime['hall_id']]);
@@ -189,10 +191,11 @@ final class CinemaRepository
             }
         }
 
+        $activeSeatCondition = $this->activeSeatCondition();
         $seatStmt = $this->db->prepare(
             'SELECT id, seat_label, row_label
              FROM hall_seats
-             WHERE hall_id = ? AND is_active = 1 AND id IN (' . implode(',', array_fill(0, count($cleanIds), '?')) . ')'
+             WHERE hall_id = ? AND ' . $activeSeatCondition . ' AND id IN (' . implode(',', array_fill(0, count($cleanIds), '?')) . ')'
         );
         $bind = array_merge([(int) $showtime['hall_id']], $cleanIds);
         $seatStmt->execute($bind);
@@ -205,7 +208,7 @@ final class CinemaRepository
         $lastRowStmt = $this->db->prepare(
             'SELECT row_label
              FROM hall_seats
-             WHERE hall_id = ? AND is_active = 1
+             WHERE hall_id = ? AND ' . $activeSeatCondition . '
              ORDER BY row_label DESC, seat_number DESC
              LIMIT 1'
         );
@@ -526,5 +529,10 @@ final class CinemaRepository
     private function driver(): string
     {
         return (string) $this->db->getAttribute(PDO::ATTR_DRIVER_NAME);
+    }
+
+    private function activeSeatCondition(string $column = 'is_active'): string
+    {
+        return $column . ' = ' . ($this->driver() === 'pgsql' ? 'TRUE' : '1');
     }
 }
